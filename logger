@@ -1,0 +1,77 @@
+import React, { createContext, useState, useCallback } from 'react';
+
+const BACKEND = process.env.REACT_APP_BACKEND || 'http://localhost:4000';
+
+export const LoggerContext = createContext();
+
+export function LoggerProvider({ children }) {
+  const [authToken, setAuthToken] = useState(null);
+  const [logs, setLogs] = useState([]);
+  const [queue, setQueue] = useState([]);
+
+  // Auth proxy call
+  const authenticate = useCallback(async () => {
+    try {
+      const resp = await fetch(`${BACKEND}/api/auth`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      const data = await resp.json();
+      if (data?.token) {
+        setAuthToken(data.token);
+        console.info("Logger authenticated");
+        flushQueue(data.token);
+        return true;
+      }
+    } catch (err) {
+      console.error("Auth failed", err);
+    }
+    return false;
+  }, []);
+
+  const flushQueue = (token) => {
+    queue.forEach((log) => sendLogToServer(log, token));
+    setQueue([]);
+  };
+
+  const sendLogToServer = async (payload, token = authToken) => {
+    try {
+      await fetch(`${BACKEND}/api/logs`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': token ? `Bearer ${token}` : ''
+        },
+        body: JSON.stringify(payload)
+      });
+    } catch (err) {
+      console.error("Send log error", err);
+    }
+  };
+
+  const log = (level, message, context = {}) => {
+    const timestamp = new Date().toISOString();
+    const payload = { level, message, timestamp, context };
+
+    if (!authToken) {
+      setQueue((prev) => [...prev, payload]);
+    } else {
+      sendLogToServer(payload);
+    }
+
+    // also update UI
+    setLogs((prev) => [...prev, { id: prev.length + 1, ...payload }]);
+
+    // console output
+    if (level === 'error') console.error(message, context);
+    else if (level === 'warn') console.warn(message, context);
+    else console.log(message, context);
+  };
+
+  return (
+    <LoggerContext.Provider value={{ authenticate, log, logs }}>
+      {children}
+    </LoggerContext.Provider>
+  );
+}
